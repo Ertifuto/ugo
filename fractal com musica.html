@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Música Fractal Ultra Relaxante (Volume Alto)</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #0c0c1c; /* Fundo ainda mais escuro */
+            color: #c0c0d0; /* Texto suave */
+        }
+        canvas {
+            border: 2px solid #3a7a3a; /* Verde mais escuro e calmo */
+            background-color: #0a0a1a;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(58, 122, 58, 0.7);
+        }
+        button {
+            margin-top: 25px;
+            padding: 12px 25px;
+            font-size: 1.1em;
+            background-color: #3a7a3a; /* Verde calmo */
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.1s ease;
+        }
+        button:hover {
+            background-color: #2a5a2a; /* Verde mais escuro no hover */
+            transform: translateY(-2px);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        p {
+            margin-top: 15px;
+            font-size: 1em;
+            color: #a0a0b0;
+            text-align: center;
+            max-width: 500px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Melodia Fractal Ambiente</h1>
+    <canvas id="mandelbrotCanvas" width="600" height="400"></canvas>
+    <button id="playButton">Iniciar Música</button>
+    <p>Prepare-se para uma experiência auditiva suave, gerada pelos padrões hipnotizantes do fractal.</p>
+
+    <script>
+        const canvas = document.getElementById('mandelbrotCanvas');
+        const ctx = canvas.getContext('2d');
+        const playButton = document.getElementById('playButton');
+
+        // --- Configurações do Fractal ---
+        const WIDTH = canvas.width;
+        const HEIGHT = canvas.height;
+        const MAX_ITERATIONS = 100; // Mais iterações para maior granularidade nos dados
+        const RE_START = -2;
+        const RE_END = 1;
+        const IM_START = -1.5;
+        const IM_END = 1.5;
+
+        // --- Configurações de Áudio ---
+        let audioContext;
+        let isPlaying = false;
+        let currentNoteTimeout;
+        let masterGainNode;
+        let convolverNode;
+        let delayNode;
+        let feedbackGainNode;
+
+        // Frequências para uma escala C Maior em 3 oitavas, com foco nas baixas e médias
+        // (C3, D3, E3, F3, G3, A3, B3, C4, D4, E4, F4, G4, A4, B4, C5)
+        const C_MAJOR_FREQUENCIES = [
+            130.81, 146.83, 164.81, 174.61, 196.00, 220.00, 246.94, // C3 a B3
+            261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, // C4 a B4
+            523.25 // C5
+        ];
+
+        const BASE_NOTE_DURATION = 1.8; // Duração ainda mais longa para relaxamento
+        const NOTES_TO_PLAY = 25; // Menos notas para uma melodia mais espaçada
+        const MASTER_VOLUME = 0.3; // <<< AQUI O VOLUME FOI AUMENTADO DE 0.05 PARA 0.3 <<<
+
+        // Parâmetros de Efeitos
+        const REVERB_DURATION = 5; // Reverberação mais longa e ambiente
+        const REVERB_DECAY = 4;
+        const DELAY_TIME = 0.8; // Atraso mais longo
+        const DELAY_FEEDBACK = 0.4; // Feedback do delay (eco)
+
+        // --- Funções Auxiliares ---
+        function mapRange(value, inMin, inMax, outMin, outMax) {
+            return ((value - inMin) * (outMax - outMin)) / (inMax - inMin) + outMin;
+        }
+
+        function mandelbrot(cx, cy) {
+            let x = 0.0;
+            let y = 0.0;
+            let iterations = 0;
+            while (x * x + y * y < 4 && iterations < MAX_ITERATIONS) {
+                let x_new = x * x - y * y + cx;
+                y = 2 * x * y + cy;
+                x = x_new;
+                iterations++;
+            }
+            return iterations;
+        }
+
+        function drawMandelbrot() {
+            const imageData = ctx.createImageData(WIDTH, HEIGHT);
+            const data = imageData.data;
+
+            for (let x = 0; x < WIDTH; x++) {
+                for (let y = 0; y < HEIGHT; y++) {
+                    const cx = mapRange(x, 0, WIDTH, RE_START, RE_END);
+                    const cy = mapRange(y, 0, HEIGHT, IM_START, IM_END);
+
+                    const iterations = mandelbrot(cx, cy);
+                    
+                    let r, g, b;
+                    if (iterations === MAX_ITERATIONS) {
+                        r = g = b = 0; // Pontos dentro do conjunto (preto)
+                    } else {
+                        // Cores mais suaves e escuras
+                        const norm = iterations / MAX_ITERATIONS;
+                        r = Math.floor(90 * norm);
+                        g = Math.floor(180 * norm);
+                        b = Math.floor(220 * norm);
+                    }
+
+                    const index = (y * WIDTH + x) * 4;
+                    data[index] = r;
+                    data[index + 1] = g;
+                    data[index + 2] = b;
+                    data[index + 3] = 255;
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        function generateImpulseResponse(duration, decay) {
+            const sampleRate = audioContext.sampleRate;
+            const length = sampleRate * duration;
+            const impulse = audioContext.createBuffer(2, length, sampleRate);
+            const impulseL = impulse.getChannelData(0);
+            const impulseR = impulse.getChannelData(1);
+
+            for (let i = 0; i < length; i++) {
+                // Decay suave e aleatoriedade para reverberação natural
+                const n = i / length;
+                impulseL[i] = (Math.random() * 2 - 1) * Math.pow(1 - n, decay);
+                impulseR[i] = (Math.random() * 2 - 1) * Math.pow(1 - n, decay);
+            }
+            return impulse;
+        }
+
+        // Função para configurar a cadeia de áudio principal uma vez
+        function setupAudioGraph() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+            // 1. Ganho Mestre (Volume Geral)
+            masterGainNode = audioContext.createGain();
+            masterGainNode.gain.value = MASTER_VOLUME; // Definido com o novo volume
+
+            // 2. Delay (Eco)
+            delayNode = audioContext.createDelay(2.0); // Max delay time
+            delayNode.delayTime.value = DELAY_TIME;
+            
+            feedbackGainNode = audioContext.createGain();
+            feedbackGainNode.gain.value = DELAY_FEEDBACK;
+            
+            delayNode.connect(feedbackGainNode);
+            feedbackGainNode.connect(delayNode); // Feedback loop
+
+            // 3. Reverberação
+            convolverNode = audioContext.createConvolver();
+            convolverNode.buffer = generateImpulseResponse(REVERB_DURATION, REVERB_DECAY);
+
+            // Conectando os nós: Source -> MasterGain -> Delay -> Reverberation -> Destination
+            masterGainNode.connect(delayNode);
+            delayNode.connect(convolverNode);
+            convolverNode.connect(audioContext.destination);
+
+            audioContext._isSetup = true; // Flag para indicar que o setup foi feito
+        }
+
+        // Função para tocar uma única nota
+        function playNote(frequency, duration) {
+            if (!audioContext || !audioContext._isSetup) {
+                setupAudioGraph(); // Garante que o grafo de áudio esteja configurado
+            }
+
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.type = 'triangle'; // Onda triangular é suave e com harmônicos ricos
+            oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+
+            // Envelope ADSR para suavidade (Ataque, Decaimento, Sustentação, Liberação)
+            const attackTime = 0.1;
+            const decayTime = 0.4;
+            const sustainLevel = 0.6;
+            const releaseTime = 1.0; // Liberação mais longa
+
+            gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+            gainNode.gain.linearRampToValueAtTime(1, audioContext.currentTime + attackTime);
+            gainNode.gain.linearRampToValueAtTime(sustainLevel, audioContext.currentTime + attackTime + decayTime);
+            gainNode.gain.setValueAtTime(sustainLevel, audioContext.currentTime + duration - releaseTime);
+            gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + duration); // O volume vai a zero no final da duração da nota
+
+            oscillator.connect(gainNode);
+            gainNode.connect(masterGainNode); // Conecta ao nó de ganho mestre
+
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + duration + releaseTime + 0.5); // Garante que a cauda do som seja ouvida
+        }
+
+        // --- Lógica de Sequenciamento ---
+        let currentFractalX = WIDTH / 2; // Posição inicial para a "caminhada"
+        let currentFractalY = HEIGHT / 2;
+
+        function startFractalMusic() {
+            if (isPlaying) {
+                stopFractalMusic();
+                return;
+            }
+
+            isPlaying = true;
+            playButton.textContent = 'Parar Música';
+            playButton.disabled = false; // Permite parar
+
+            scheduleNextNote();
+        }
+
+        function scheduleNextNote() {
+            if (!isPlaying) {
+                return; // Para se a música foi parada
+            }
+
+            // Move-se suavemente pelo fractal
+            const stepX = (Math.random() * 2 - 1) * 50; // Passos menores
+            const stepY = (Math.random() * 2 - 1) * 50;
+            currentFractalX = Math.max(0, Math.min(WIDTH - 1, currentFractalX + stepX));
+            currentFractalY = Math.max(0, Math.min(HEIGHT - 1, currentFractalY + stepY));
+
+            const cx = mapRange(currentFractalX, 0, WIDTH, RE_START, RE_END);
+            const cy = mapRange(currentFractalY, 0, HEIGHT, IM_START, IM_END);
+            const iterations = mandelbrot(cx, cy);
+
+            // Mapeia iterações para um índice na escala musical
+            const noteIndex = Math.floor(mapRange(iterations, 0, MAX_ITERATIONS, 0, C_MAJOR_FREQUENCIES.length - 1));
+            const frequency = C_MAJOR_FREQUENCIES[noteIndex];
+
+            // Variações sutis na duração e no tempo entre as notas
+            const actualNoteDuration = BASE_NOTE_DURATION * (1 + (Math.random() - 0.5) * 0.4); // +/- 20%
+            const intervalBetweenNotes = actualNoteDuration * 1000 * (1 + (Math.random() - 0.5) * 0.3); // +/- 15%
+
+            playNote(frequency, actualNoteDuration);
+
+            currentNoteTimeout = setTimeout(scheduleNextNote, intervalBetweenNotes);
+
+            // Opcional: Para a música após um número limitado de notas
+            currentNoteIndex++;
+            if (currentNoteIndex >= NOTES_TO_PLAY) {
+                setTimeout(stopFractalMusic, intervalBetweenNotes); // Para após a última nota + intervalo
+            }
+        }
+
+        function stopFractalMusic() {
+            isPlaying = false;
+            if (currentNoteTimeout) {
+                clearTimeout(currentNoteTimeout);
+            }
+            playButton.textContent = 'Iniciar Música';
+            if (audioContext && audioContext.state === 'running') {
+                audioContext.suspend(); // Suspende o contexto de áudio
+            }
+            currentNoteIndex = 0; // Reseta o contador de notas
+        }
+        // --- Fim Lógica de Sequenciamento ---
+
+        // --- Inicialização ---
+        window.onload = drawMandelbrot; // Desenha o fractal ao carregar a página
+
+        playButton.addEventListener('click', () => {
+            if (!audioContext || audioContext.state === 'closed') {
+                setupAudioGraph(); // Configura o grafo de áudio apenas na primeira vez
+            }
+            
+            if (audioContext.state === 'suspended') {
+                audioContext.resume().then(() => {
+                    startFractalMusic();
+                });
+            } else {
+                startFractalMusic();
+            }
+        });
+        // --- Fim Inicialização ---
+    </script>
+</body>
+</html>
